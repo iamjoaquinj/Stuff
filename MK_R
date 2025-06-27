@@ -1,0 +1,83 @@
+install.packages("raster")
+#install.packages("rgdal")
+install.packages("Kendall")
+install.packages("dplyr")
+install.packages("sf")
+
+library(raster)
+#library(rgdal)
+library(Kendall)
+library(dplyr)
+library(sf)
+
+# Leer la máscara (ROI)
+#ROI <- readOGR(dsn = "./shp", layer = "ROI_N")
+
+#Cargar rasters
+ndvi_files <- list.files(path = "H:/Trinchera", pattern = "*.tif$", full.names = TRUE)
+
+
+# Cargar y procesar rasters
+rasters <- stack(ndvi_files)  # Crear un stack con todos los archivos
+
+# Aplicar máscara y recortar al ROI
+#rasters <- mask(rasters, ROI)
+#rasters <- crop(rasters, extent(ROI))
+
+# Calcular la tendencia para cada píxel usando la función 'calc'
+kendall_result <- calc(rasters, fun = fun_k)
+
+# Guardar el raster de Tau
+writeRaster(kendall_result[[2]], filename = "tau_values.tif", format = "GTiff", overwrite = TRUE)
+
+# Mostrar el resultado
+print(kendall_result)
+
+
+
+
+# Exportar el stack procesado (opcional)
+writeRaster(rasters, filename = "processed_ndvi_stack.tif", format = "GTiff", overwrite = TRUE)
+
+##Calculo de serie temporal de los pixeles
+
+fun_k <- function(x){return(unlist(MannKendall(x)))}
+kendal_result <- calc(rasters, fun_k)
+
+
+#Exportar tendencia (tau) a un tif
+
+writeRaster(kendal_result$tau, ("tendenciatau.tif"), format="GTiff", overwrite=TRUE)
+
+
+# Función para calcular la pendiente de Sen y valor Tau de Kendall
+calc_trends <- function(pixel_values) {
+  if (all(is.na(pixel_values))) {
+    return(c(Sen = NA, Tau = NA))
+  }
+  years <- 1:length(pixel_values)  # Asume que los rasters están en orden temporal
+  mk <- MannKendall(pixel_values)
+  sen_slope <- median(outer(pixel_values, pixel_values, "-"), na.rm = TRUE) / median(outer(years, years, "-"), na.rm = TRUE)
+  return(c(Sen = sen_slope, Tau = mk$tau))
+}
+
+# Calcular tendencias para cada píxel
+trend_results <- calc(rasters, fun = calc_trends)
+
+# Extraer capas de pendiente de Sen y Tau
+sen_slope <- trend_results[[1]]
+kendall_tau <- trend_results[[2]]
+
+# Exportar resultados
+writeRaster(sen_slope, filename = "sen_slope.tif", format = "GTiff", overwrite = TRUE)
+writeRaster(kendall_tau, filename = "kendall_tau.tif", format = "GTiff", overwrite = TRUE)
+
+# Clasificación de la tendencia (ejemplo)
+rclmat <- matrix(c(-Inf, -0.25, -1,  # Tendencia negativa fuerte
+                   -0.25, 0.5, 0,   # Tendencia débil o estable
+                   0.5, Inf, 1),    # Tendencia positiva fuerte
+                 ncol = 3, byrow = TRUE)
+classified_tau <- reclassify(kendall_tau, rclmat)
+
+# Exportar tendencia reclasificada
+writeRaster(classified_tau, filename = "classified_tau.tif", format = "GTiff", overwrite = TRUE)
